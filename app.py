@@ -3,6 +3,7 @@ from dash.dependencies import Input, Output, State
 import dash_core_components as dcc
 import dash_html_components as html
 import dash_table as dt
+import dash_auth as da
 import plotly.express as px
 import plotly.graph_objects as go
 from flask_caching import Cache
@@ -10,6 +11,7 @@ import pandas as pd
 import base64
 from io import BytesIO, StringIO
 from mrcfile import mrcinterpreter
+import os
 import util
 
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']  # TODO: write local CSS
@@ -19,6 +21,16 @@ cache = Cache(app.server, config={
     'CACHE_TYPE': 'filesystem',
     'CACHE_DIR': 'cache'
 })
+
+# basic HTTP auth
+is_heroku = os.environ.get('IS_HEROKU', None)
+if is_heroku:
+    collab_user = os.environ.get('COLLAB_USER', None)
+    collab_key = os.environ.get('COLLAB_KEY', None)
+    auth = da.BasicAuth(
+        app, {collab_user: collab_key}
+    )
+
 
 app.layout = html.Div([
     # dcc.Store(id='mrc-memory', data={'mrc': []}),
@@ -289,4 +301,4 @@ def update_graph(boxfile_data, recalc_boxes_clicks, checklist_vals, figure):
 
 
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run_server(debug=False)
