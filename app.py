@@ -27,7 +27,7 @@ cache = Cache(app.server, config={
 is_heroku = os.environ.get('IS_HEROKU', None)
 if is_heroku:
     collab_user = os.environ.get('COLLAB_USER', None)
-    collab_key = os.environ.get('COLLAB_KEY', None)
+    collab_key = os.environ.get('COLLAB_SECRET', None)
     auth = da.BasicAuth(
         app, {collab_user: collab_key}
     )
