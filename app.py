@@ -17,6 +17,7 @@ import util
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']  # TODO: write local CSS
 
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
+server = app.server  # for gunicorn deployment
 cache = Cache(app.server, config={
     'CACHE_TYPE': 'filesystem',
     'CACHE_DIR': 'cache'
