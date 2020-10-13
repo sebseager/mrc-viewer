@@ -1,4 +1,3 @@
-import dash
 from dash.dependencies import Input, Output, State
 import dash_core_components as dcc
 import dash_html_components as html
@@ -6,7 +5,6 @@ import dash_table as dt
 import dash_auth as da
 import plotly.express as px
 import plotly.graph_objects as go
-from flask_caching import Cache
 import pandas as pd
 import base64
 from io import BytesIO, StringIO
@@ -14,25 +12,43 @@ from mrcfile import mrcinterpreter
 import os
 import util
 
-external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']  # TODO: write local CSS
+external_stylesheets = ['/assets/style.css']
 
-app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
-server = app.server  # for gunicorn deployment
-cache = Cache(app.server, config={
-    'CACHE_TYPE': 'filesystem',
-    'CACHE_DIR': 'cache'
-})
-
-# basic HTTP auth
-is_heroku = os.environ.get('IS_HEROKU', None)
-if is_heroku:
-    collab_user = os.environ.get('COLLAB_USER', None)
-    collab_key = os.environ.get('COLLAB_SECRET', None)
-    auth = da.BasicAuth(
-        app, {collab_user: collab_key}
-    )
+try:  # check if we're running in a notebook (not defined outside of IPython)
+    get_ipython  # syntax warnings are fine here
+    from jupyter_dash import JupyterDash
+    app = JupyterDash(__name__, external_stylesheets=external_stylesheets)
+except Exception:  # otherwise assume we're on a server
+    from dash import Dash
+    app = Dash(__name__, external_stylesheets=external_stylesheets)
+    server = app.server  # for gunicorn deployment
+    is_heroku = os.environ.get('IS_HEROKU', None)  # detect Heroku deployment
+    if is_heroku:
+        collab_user = os.environ.get('COLLAB_USER', None)  # basic HTTP auth
+        collab_key = os.environ.get('COLLAB_SECRET', None)
+        auth = da.BasicAuth(app, {collab_user: collab_key})
 
 
+# cache = Cache(app.server, config={
+#     'CACHE_TYPE': 'filesystem',
+#     'CACHE_DIR': 'cache'
+# })
+
+# reusable layout elements
+manual_boxsize_title = html.H6(
+    'Manual box size',
+    style={
+        'marginLeft': '20px'
+    })
+
+manual_boxsize_warning = html.H6(
+    'Manual box size required for this file',
+    style={
+        'marginLeft': '20px',
+        'color': 'red'
+    })
+
+# main layout
 app.layout = html.Div([
     # dcc.Store(id='mrc-memory', data={'mrc': []}),
     dcc.Store(id='boxfile-memory', data={'boxfile-counter': 0, 'filenames': {}}),
@@ -61,40 +77,80 @@ app.layout = html.Div([
             html.Div([
                 html.H4('Options'),
                 html.Div([
+                    html.Div([manual_boxsize_title], id='manual-boxsize-title'),
+                    dcc.Input(
+                        id='manual-boxsize',
+                        placeholder='default: parse from file',
+                        type='number',
+                        min=0,
+                        value='',
+                        style={
+                            'marginLeft': '20px',
+                            'width': 'calc(100% - 20px)'
+                        }
+                    ),
+                ]),
+                html.Br(),
+                html.Div([
                     html.H6(
-                        'Manual box size',
+                        'Show 75% of boxes',
+                        id='box-percent-label',
                         style={
                             'marginLeft': '20px',
                             'marginRight': '20px'
                         }),
-                    dcc.Input(
-                        id='manual-boxsize',
-                        placeholder='automatic',
-                        type='number',
+                    dcc.Slider(
+                        id='box-percent-slider',
                         min=0,
-                        value=''
-                    ),
+                        max=100,
+                        step=1,
+                        value=75,
+                        updatemode='drag'
+                    )
+                ]),
+                html.Div([
                     html.H6(
-                        'required for this file',
-                        id='box-size-required',
+                        'Confidence range (75-100%)',
+                        id='conf-range-label',
                         style={
-                            'color': 'red',
                             'marginLeft': '20px',
-                            'display': 'none'
+                            'marginRight': '20px'
+                        }),
+                    dcc.RangeSlider(
+                        id='conf-range-slider',
+                        min=0,
+                        max=100,
+                        step=1,
+                        value=[75, 100],
+                        marks={
+                            0: {'label': '0%'},
+                            60: {'label': '60%'},
+                            75: {'label': '75%'},
+                            90: {'label': '90%'},
+                            100: {'label': '100%'}
+                        },
+                        pushable=5,
+                        updatemode='drag'
+                    ),
+                    html.P(
+                        'Applies to the following coordinate files: ',
+                        id='conf-applies-to',
+                        style={
+                            'marginLeft': '20px',
+                            'marginRight': '20px'
+                        }),
+                ]),
+                html.Br(),
+                html.Div([
+                    html.Button(
+                        'Apply All',
+                        id='apply-btn',
+                        style={
+                            'marginBottom': '20px'
                         })
                 ], style={
-                    'display': 'flex',
-                    'alignItems': 'center'
+                    'textAlign': 'right'
                 }),
-                html.Br(),
-                html.Button(
-                    'Recalculate Boxes',
-                    id='recalc-boxes',
-                    style={
-                        'marginLeft': '20px',
-                        'marginBottom': '20px'
-                    }),
-
                 html.H4('Loaded coordinate files'),
                 html.Div([
                     dcc.Checklist(
@@ -110,7 +166,9 @@ app.layout = html.Div([
                         placeholder='Select coordinate file to preview...'
                     ),
                     dt.DataTable(
-                        id='boxfile-table'
+                        id='boxfile-table',
+                        sort_action='native',
+                        filter_action='native'
                     )
                 ], style={
                     'marginLeft': '20px'
@@ -144,17 +202,45 @@ app.layout = html.Div([
             html.Div([
                 dcc.Graph(
                     id="micrograph",
-                    animate=False,
-                    figure=go.Figure(layout={
-                        'shapes': []
-                    }),
-                    style={"width": "calc(100vh - 200px)", 'height': 'calc(100vh - 200px)', "display": "inline-block"}
+                    figure=go.Figure(
+                        layout={
+                            'shapes': [],
+                            'autosize': True,
+                            'margin': dict(l=5, r=5, b=5, t=40, pad=2)
+                        }
+                    ),
+                    style={
+                        'width': 'calc(100vh - 200px)',
+                        'height': 'calc(100vh - 200px)',
+                        'display': 'inline-block'
+                    },
+                    config={
+                        'responsive': True,
+                        'displaylogo': False,
+                        'watermark': False
+                    }
                 )], id='output-image-upload')
         ], className="seven columns"),
     ], className="row"),
 ], style={
     'textAlign': 'center'
 })
+
+
+@app.callback(
+    Output('conf-range-label', 'children'),
+    [Input('conf-range-slider', 'value')]
+)
+def box_slider_changed(value):
+    return 'Confidence range (%s-%s%%)' % (value[0], value[1])
+
+
+@app.callback(
+    Output('box-percent-label', 'children'),
+    [Input('box-percent-slider', 'value')]
+)
+def box_slider_changed(value):
+    return 'Show %s%% of boxes' % value
 
 
 @app.callback(
@@ -167,8 +253,8 @@ def display_boxfile_table(dropdown_value, data):
     tbl_cols = []
     tbl_data = []
     if dropdown_value is not None and selected_boxfile in data:
+        print("INFO: displaying table")
         df = pd.DataFrame(data[selected_boxfile])
-        print(df)
         tbl_cols = [{'name': i, 'id': i} for i in df.columns]
         tbl_data = df.to_dict('records')
 
@@ -180,17 +266,16 @@ def display_boxfile_table(dropdown_value, data):
     Output('mrc-name', 'children'),
     Output('upload-box', 'disabled'),
     [Input('upload-image', 'contents')],
-    [State('upload-image', 'filename')])
-def load_micrograph(contents, filename):
-    print("LOAD MRC")
-    fig = go.Figure(layout={
-        'autosize': True,
-        'margin': dict(l=5, r=5, b=5, t=40, pad=2)
-    })
+    [State('upload-image', 'filename')],
+    [State('micrograph', 'figure')],
+    [State('micrograph', 'style')],
+    [State('micrograph', 'config')])
+def load_micrograph(contents, filename, graph_figure, graph_style, graph_config):
+    fig = go.Figure()
     filename = filename or 'Micrograph'
     box_upload_disabled = False  # we don't need to keep boxfile upload disabled until a micrograph is loaded anymore
     if contents is not None:
-        print("LOADING MRC")
+        print("INFO: loading mrc")
         content_type, content_string = contents.split(',')
         decoded = base64.b64decode(content_string)
         interpreter = mrcinterpreter.MrcInterpreter(iostream=BytesIO(decoded), permissive=True)
@@ -198,54 +283,52 @@ def load_micrograph(contents, filename):
         mrc_histeq = util.hist_equalize(mrc_raw)
 
         fig = px.imshow(mrc_histeq, binary_string=True, origin='lower', aspect='equal')
-        fig.update_layout(
-            autosize=True,
-            margin=dict(l=5, r=5, b=5, t=40, pad=2)
-        )
 
         box_upload_disabled = False
+        print("INFO: loading mrc done")
+    else:
+        print("INFO: micrograph relayout")
+
+    fig.update_layout(graph_figure['layout'])
 
     return html.Div([
         dcc.Graph(
-            id="micrograph",
+            id='micrograph',
             figure=fig,
-            style={"width": "calc(100vh - 200px)", 'height': 'calc(100vh - 200px)', "display": "inline-block"})
-    ]), filename, box_upload_disabled
+            style=graph_style,
+            config=graph_config
+        )]), filename, box_upload_disabled
 
 
 @app.callback(
     Output('boxfile-memory', 'data'),
-    Output('box-size-required', 'style'),
+    Output('manual-boxsize-title', 'children'),
     [Input('upload-box', 'contents')],
-    [Input('manual-boxsize', 'value')],
+    [Input('apply-btn', 'n_clicks')],
+    [State('manual-boxsize', 'value')],
     [State('upload-box', 'filename')],
-    [State('boxfile-memory', 'data')],
-    [State('box-size-required', 'style')])
-def store_box(contents, manual_boxsize, filename, data, box_size_required):
-    print("STORE BOX")
+    [State('boxfile-memory', 'data')])
+def store_box(contents, n_clicks, manual_boxsize, filename, data):
     data = data or {'boxfile-counter': 0, 'filenames': {}}
+
     if contents is not None and filename not in data['filenames'].values():
-        print("STORING BOX")
+        print("INFO: storing boxfile (filename = %s)" % filename)
         content_type, content_string = contents.split(',')
         decoded = base64.b64decode(content_string)
         df = util.parse_boxfile(StringIO(decoded.decode('utf-8')), filename, manual_boxsize)
         if df is None:
-            box_size_required['display'] = 'inline'
-            return data, box_size_required
-        rects = [
-            util.make_rect(
-                row['x'], row['y'], row['w'], row['h'],
-                util.BOX_COLORS[data['boxfile-counter'] % len(util.BOX_COLORS)])
-            for i, row in df.iterrows() if len(row) > 1
-        ]
-        print(df)
+            return data, manual_boxsize_warning
+        # rects = [
+        #     util.make_rect(row['x'], row['y'], row['w'], row['h'], util.get_color(data['boxfile-counter'])[0] + 1)
+        #     for i, row in df.iterrows() if len(row) > 1
+        # ]
         data['boxfile-counter'] = data['boxfile-counter'] + 1
         data['filenames'][data['boxfile-counter']] = filename
         data['boxfile_%s' % data['boxfile-counter']] = df.to_dict()
-        data['rects_%s' % data['boxfile-counter']] = rects
+        # data['rects_%s' % data['boxfile-counter']] = rects
 
-    box_size_required['display'] = 'none'
-    return data, box_size_required
+    print("INFO: boxfile storage reloaded")
+    return data, manual_boxsize_title
 
 
 @app.callback(
@@ -253,53 +336,55 @@ def store_box(contents, manual_boxsize, filename, data, box_size_required):
     Output('boxfile-dropdown', 'options'),
     [Input('boxfile-memory', 'data')])
 def update_boxfile_checklist(data):
-    print("UPDATING CHECKLIST")
     data = data or {'boxfile-counter': 0, 'filenames': {}}
     loaded_boxfiles = data['filenames']
-    print(loaded_boxfiles)
+    print("INFO: checklist updated (loaded_boxfiles = %s)" % len(loaded_boxfiles))
     if len(loaded_boxfiles) == 0:
         return [{'label': 'None available yet', 'disabled': True, 'value': 'none'}], []
     else:
-        boxfile_list = [{'label': v, 'disabled': False, 'value': k} for k, v in loaded_boxfiles.items()]
+        boxfile_list = [{'label': ' %s (%s): %s' % (k, util.get_color(k)[1], v), 'disabled': False, 'value': k}
+                        for k, v in loaded_boxfiles.items()]
         return boxfile_list, boxfile_list
 
 
 @app.callback(
     Output('micrograph', 'figure'),
     [Input('boxfile-memory', 'data')],
-    [Input('recalc-boxes', 'n_clicks')],
+    [Input('apply-btn', 'n_clicks')],
     [Input('boxfile-checklist', 'value')],
-    [State('micrograph', 'figure')])
-@cache.memoize(timeout=300)
-def update_graph(boxfile_data, recalc_boxes_clicks, checklist_vals, figure):
-    print("UPDATE BOXFILES")
+    [State('micrograph', 'figure')],
+    [State('box-percent-slider', 'value')],
+    [State('conf-range-slider', 'value')])
+def update_graph(data, n_clicks, checklist_vals, figure, box_percent, conf_range):
     fig = go.Figure(data=figure['data'], layout=figure['layout'])
-    shapes = []
-    if boxfile_data is not None and boxfile_data['boxfile-counter'] > 0:
-        for i in range(1, boxfile_data['boxfile-counter'] + 1):
-            print("UPDATING BOXFILES")
-            rects = boxfile_data['rects_%s' % i]
-            if str(i) in checklist_vals:
-
-                # for shape in boxfile_data['rects_%s' % i]:
-                #     print(d_shape(shape)
-                #     fig.adshape)
-                # figure['layout']['shapes'] = boxfile_data['rects_%s' % i]
-                # updated_layout.update({'shapes': })
-                for d in rects:
-                    d.update({'visible': True})
-            else:
-                for d in rects:
-                    d.update({'visible': False})
-            shapes.extend(rects)
+    all_rects = []
+    all_traces = []
+    if data is not None and data['boxfile-counter'] > 0:
+        print("INFO: updating graph overlay (counter = %s)" % data['boxfile-counter'])
+        for i in range(1, data['boxfile-counter'] + 1):
+            visible = str(i) in checklist_vals
+            boxes = pd.DataFrame(data['boxfile_%s' % i])
+            boxes = boxes.loc[(boxes['conf'] >= conf_range[0] / 100) & (boxes['conf'] <= conf_range[1] / 100)]
+            boxes = boxes.sample(frac=box_percent / 100)
+            rects = [
+                util.make_rect(row['x'], row['y'], row['w'], row['h'], util.get_color(data['boxfile-counter'])[0],
+                               vis=visible) for i, row in boxes.iterrows() if len(row) > 1
+            ]
+            all_rects.extend(rects)
 
     updated_layout = figure['layout']
-    updated_layout['shapes'] = shapes
+    updated_layout['shapes'] = all_rects if len(all_rects) > 0 else [util.make_rect(0, 0, 1, 1, 'orange', vis=True)]
     fig.update_layout(updated_layout)
-    print("DONE\n")
 
+    print("INFO: graph reloaded")
     return fig
 
 
-if __name__ == '__main__':
-    app.run_server(debug=False)
+try:
+    get_ipython
+    app.run_server(mode='inline')
+    print("Detected IPython environment (running inline)")
+except Exception:
+    if __name__ == '__main__':
+        app.run_server(debug=True)  # TODO: set to False before deploying
+        print("Running in server mode")
