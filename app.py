@@ -2,6 +2,7 @@ from dash.dependencies import Input, Output, State
 import dash_core_components as dcc
 import dash_html_components as html
 import dash_table as dt
+import dash_daq as daq
 import dash_auth as da
 import plotly.express as px
 import plotly.graph_objects as go
@@ -10,6 +11,7 @@ import base64
 from io import BytesIO, StringIO
 from mrcfile import mrcinterpreter
 import os
+import hashlib
 import util
 
 external_stylesheets = ['/assets/style.css']
@@ -51,7 +53,7 @@ manual_boxsize_warning = html.H6(
 # main layout
 app.layout = html.Div([
     # dcc.Store(id='mrc-memory', data={'mrc': []}),
-    dcc.Store(id='boxfile-memory', data={'boxfile-counter': 0, 'filenames': {}}),
+    dcc.Store(id='boxfile-memory', data={'boxfile-counter': 0, 'boxfiles': {}, 'filenames': {}, 'filehashes': {}}),
     html.Div([
         html.Div([
             html.H3('Coordinates'),
@@ -75,12 +77,20 @@ app.layout = html.Div([
             ),
 
             html.Div([
+                dcc.Checklist(
+                    options=[
+                        {'label': ' None available yet', 'disabled': True, 'value': 'none'},
+                    ],
+                    value=['none'],
+                    id='boxfile-checklist'
+                ),
+                html.Br(),
                 html.H4('Options'),
                 html.Div([
                     html.Div([manual_boxsize_title], id='manual-boxsize-title'),
                     dcc.Input(
                         id='manual-boxsize',
-                        placeholder='default: parse from file',
+                        placeholder='default: parse from file if possible',
                         type='number',
                         min=0,
                         value='',
@@ -93,7 +103,7 @@ app.layout = html.Div([
                 html.Br(),
                 html.Div([
                     html.H6(
-                        'Show 75% of boxes',
+                        'Show 75% of boxes (random)',
                         id='box-percent-label',
                         style={
                             'marginLeft': '20px',
@@ -131,19 +141,36 @@ app.layout = html.Div([
                         },
                         pushable=5,
                         updatemode='drag'
-                    ),
-                    html.P(
-                        'Applies to the following coordinate files: ',
-                        id='conf-applies-to',
+                    )
+                ]),
+                html.Br(),
+                html.Div([
+                    html.H6(
+                        'Show boxes missing confidence values',
                         style={
                             'marginLeft': '20px',
                             'marginRight': '20px'
                         }),
-                ]),
+                    daq.BooleanSwitch(
+                        id='no-conf-boxes-switch',
+                        on=True
+                    )
+                ], style={
+                    'display': 'flex',
+                    'alignItems': 'center'
+                }),
+                html.P(
+                    'Applies to starred (*) coordinate files above.',
+                    id='conf-applies-to',
+                    style={
+                        'fontStyle': 'italic',
+                        'marginLeft': '20px',
+                        'marginRight': '20px'
+                    }),
                 html.Br(),
                 html.Div([
                     html.Button(
-                        'Apply All',
+                        'Apply To Micrograph',
                         id='apply-btn',
                         style={
                             'marginBottom': '20px'
@@ -151,16 +178,8 @@ app.layout = html.Div([
                 ], style={
                     'textAlign': 'right'
                 }),
-                html.H4('Loaded coordinate files'),
+                html.H4('Display coordinate file'),
                 html.Div([
-                    dcc.Checklist(
-                        options=[
-                            {'label': 'None available yet', 'disabled': True, 'value': 'none'},
-                        ],
-                        value=[],
-                        id='boxfile-checklist'
-                    ),
-                    html.Br(),
                     dcc.Dropdown(
                         id='boxfile-dropdown',
                         placeholder='Select coordinate file to preview...'
@@ -205,13 +224,20 @@ app.layout = html.Div([
                     figure=go.Figure(
                         layout={
                             'shapes': [],
+                            # 'paper_bgcolor': 'rgba(0,0,0,0)',
+                            # 'plot_bgcolor': 'rgba(0,0,0,0)',
                             'autosize': True,
-                            'margin': dict(l=5, r=5, b=5, t=40, pad=2)
+                            'margin': dict(l=0, r=0, b=0, t=35, pad=5),
+                            'yaxis': {
+                                'scaleanchor': 'x',
+                                'scaleratio': 1
+                            }
                         }
                     ),
                     style={
-                        'width': 'calc(100vh - 200px)',
-                        'height': 'calc(100vh - 200px)',
+                        'width': 'calc(100vh - 250px)',
+                        'height': 'calc(100vh - 250px)',
+                        'marginTop': '15px',
                         'display': 'inline-block'
                     },
                     config={
@@ -240,7 +266,7 @@ def box_slider_changed(value):
     [Input('box-percent-slider', 'value')]
 )
 def box_slider_changed(value):
-    return 'Show %s%% of boxes' % value
+    return 'Show %s%% of boxes (random)' % value
 
 
 @app.callback(
@@ -249,12 +275,11 @@ def box_slider_changed(value):
     [Input('boxfile-dropdown', 'value')],
     [State('boxfile-memory', 'data')])
 def display_boxfile_table(dropdown_value, data):
-    selected_boxfile = 'boxfile_%s' % dropdown_value
     tbl_cols = []
     tbl_data = []
-    if dropdown_value is not None and selected_boxfile in data:
+    if dropdown_value is not None and str(dropdown_value) in data['boxfiles']:
         print("INFO: displaying table")
-        df = pd.DataFrame(data[selected_boxfile])
+        df = pd.DataFrame(data['boxfiles'][str(dropdown_value)])
         tbl_cols = [{'name': i, 'id': i} for i in df.columns]
         tbl_data = df.to_dict('records')
 
@@ -284,6 +309,11 @@ def load_micrograph(contents, filename, graph_figure, graph_style, graph_config)
 
         fig = px.imshow(mrc_histeq, binary_string=True, origin='lower', aspect='equal')
 
+        if 'data' in graph_figure:
+            for trace in graph_figure['data']:
+                if trace not in fig['data'] and (trace['type'] == 'scatter' or trace['type'] == 'scattergl'):
+                    fig.add_trace(trace)
+
         box_upload_disabled = False
         print("INFO: loading mrc done")
     else:
@@ -301,83 +331,155 @@ def load_micrograph(contents, filename, graph_figure, graph_style, graph_config)
 
 
 @app.callback(
+    Output('boxfile-checklist', 'options'),
+    Output('boxfile-checklist', 'value'),
+    Output('boxfile-dropdown', 'options'),
+    [Input('boxfile-memory', 'data')],
+    [State('boxfile-checklist', 'options')],
+    [State('boxfile-checklist', 'value')])
+def update_boxfile_checklist(data, checklist_opts, checklist_vals):
+    loaded_boxfiles = data['filenames']
+    print("INFO: checklist updated (loaded_boxfiles = %s)" % len(loaded_boxfiles))
+    if len(loaded_boxfiles) == 0:
+        return checklist_opts, checklist_vals, []
+    else:
+        boxfile_list = [{'label': ' %s (%s): %s' % (k, util.get_color(k)[1], v), 'disabled': True, 'value': k}
+                        for k, v in loaded_boxfiles.items()]
+        for i in range(len(boxfile_list)):
+            if (pd.DataFrame(data['boxfiles'][str(i + 1)])['conf'] == util.NO_CONF_VAL).all():
+                boxfile_list[i]['label'] = ' *' + boxfile_list[i]['label']
+        all_vals = [k for k, _ in loaded_boxfiles.items()]
+        dropdown_list = []
+        for d in boxfile_list:
+            e = d.copy()
+            e.update({'disabled': False})
+            dropdown_list.append(e)
+        return boxfile_list, all_vals, dropdown_list
+
+
+@app.callback(
     Output('boxfile-memory', 'data'),
     Output('manual-boxsize-title', 'children'),
+    Output('micrograph', 'figure'),
     [Input('upload-box', 'contents')],
     [Input('apply-btn', 'n_clicks')],
     [State('manual-boxsize', 'value')],
     [State('upload-box', 'filename')],
-    [State('boxfile-memory', 'data')])
-def store_box(contents, n_clicks, manual_boxsize, filename, data):
-    data = data or {'boxfile-counter': 0, 'filenames': {}}
+    [State('boxfile-memory', 'data')],
+    [State('micrograph', 'figure')],
+    [State('box-percent-slider', 'value')],
+    [State('conf-range-slider', 'value')],
+    [State('no-conf-boxes-switch', 'on')])
+def store_box(contents, n_clicks, manual_boxsize, filename, data, figure, box_percent, conf_range, show_no_conf_boxes):
+    # data = data or {'boxfile-counter': 0, 'filenames': {}, 'hashes': {}}
+    fig = go.Figure(data=figure['data'], layout=figure['layout'])
 
-    if contents is not None and filename not in data['filenames'].values():
+    if contents is not None:  # and filename not in data['filenames'].values():
         print("INFO: storing boxfile (filename = %s)" % filename)
         content_type, content_string = contents.split(',')
         decoded = base64.b64decode(content_string)
-        df = util.parse_boxfile(StringIO(decoded.decode('utf-8')), filename, manual_boxsize)
-        if df is None:
-            return data, manual_boxsize_warning
+        hashed = hashlib.md5(decoded).hexdigest()
+        last_uploaded_df = util.parse_boxfile(StringIO(decoded.decode('utf-8')), filename, manual_boxsize)
+
+        fig['data'] = [trace for trace in fig['data'] if trace['type'] != 'scatter' and trace['type'] != 'scattergl']
+        for i in range(1, data['boxfile-counter'] + 1):
+            df = pd.DataFrame(data['boxfiles'][str(i)])
+            filtered_df = util.filter_df(df, box_percent, conf_range, keep_no_conf=show_no_conf_boxes)
+            fig.add_traces(util.make_trace(filtered_df, util.get_color(i)[0], data['filenames'][str(i)],
+                                           data['filehashes'][str(i)]))
+
+        if hashed in data['filehashes'].values():
+            return data, manual_boxsize_title, fig
+
+        if last_uploaded_df is None:
+            return data, manual_boxsize_warning, fig
+
         # rects = [
         #     util.make_rect(row['x'], row['y'], row['w'], row['h'], util.get_color(data['boxfile-counter'])[0] + 1)
         #     for i, row in df.iterrows() if len(row) > 1
         # ]
+
         data['boxfile-counter'] = data['boxfile-counter'] + 1
         data['filenames'][data['boxfile-counter']] = filename
-        data['boxfile_%s' % data['boxfile-counter']] = df.to_dict()
+        data['filehashes'][data['boxfile-counter']] = hashed
+        # data['has-conf'][data['boxfile-counter']] = has_conf
+        data['boxfiles'][data['boxfile-counter']] = last_uploaded_df.to_dict()
         # data['rects_%s' % data['boxfile-counter']] = rects
 
+        # fig = util.add_trace(fig, df, box_percent, conf_range, util.get_color(data['boxfile-counter'])[0], filename)
+
+        # boxes = df.loc[(df['conf'] >= conf_range[0] / 100) & (df['conf'] <= conf_range[1] / 100)]
+        # boxes = boxes.sample(frac=box_percent / 100)
+        # print(fig['data'])
+
+        # fig['data'] = [x for x in fig['data'] if x['legendgroup'] != hashed]
+
+        boxes = util.filter_df(last_uploaded_df, box_percent, conf_range, keep_no_conf=show_no_conf_boxes)
+
+        fig.add_traces(util.make_trace(boxes, util.get_color(data['boxfile-counter'])[0], filename, hashed))
+
+    # no_conf_hashes = [data['hashes'][k2] for k2 in [k for k, v in data['has-conf'].items() if v is True]]
+    # for h in no_conf_hashes:
+    #     if show_no_conf_boxes:
+    #         pass
+    #     else:
+    #         pass
+
+    fig.update_layout({
+        'legend': {
+            'orientation': 'h',
+            'yanchor': 'top',
+            'y': -0.05,
+            'xanchor': 'center',
+            'x': 0.5
+        }
+    })
+
     print("INFO: boxfile storage reloaded")
-    return data, manual_boxsize_title
+    # print(fig)
+    return data, manual_boxsize_title, fig
 
 
-@app.callback(
-    Output('boxfile-checklist', 'options'),
-    Output('boxfile-dropdown', 'options'),
-    [Input('boxfile-memory', 'data')])
-def update_boxfile_checklist(data):
-    data = data or {'boxfile-counter': 0, 'filenames': {}}
-    loaded_boxfiles = data['filenames']
-    print("INFO: checklist updated (loaded_boxfiles = %s)" % len(loaded_boxfiles))
-    if len(loaded_boxfiles) == 0:
-        return [{'label': 'None available yet', 'disabled': True, 'value': 'none'}], []
-    else:
-        boxfile_list = [{'label': ' %s (%s): %s' % (k, util.get_color(k)[1], v), 'disabled': False, 'value': k}
-                        for k, v in loaded_boxfiles.items()]
-        return boxfile_list, boxfile_list
-
-
-@app.callback(
-    Output('micrograph', 'figure'),
-    [Input('boxfile-memory', 'data')],
-    [Input('apply-btn', 'n_clicks')],
-    [Input('boxfile-checklist', 'value')],
-    [State('micrograph', 'figure')],
-    [State('box-percent-slider', 'value')],
-    [State('conf-range-slider', 'value')])
-def update_graph(data, n_clicks, checklist_vals, figure, box_percent, conf_range):
-    fig = go.Figure(data=figure['data'], layout=figure['layout'])
-    all_rects = []
-    all_traces = []
-    if data is not None and data['boxfile-counter'] > 0:
-        print("INFO: updating graph overlay (counter = %s)" % data['boxfile-counter'])
-        for i in range(1, data['boxfile-counter'] + 1):
-            visible = str(i) in checklist_vals
-            boxes = pd.DataFrame(data['boxfile_%s' % i])
-            boxes = boxes.loc[(boxes['conf'] >= conf_range[0] / 100) & (boxes['conf'] <= conf_range[1] / 100)]
-            boxes = boxes.sample(frac=box_percent / 100)
-            rects = [
-                util.make_rect(row['x'], row['y'], row['w'], row['h'], util.get_color(data['boxfile-counter'])[0],
-                               vis=visible) for i, row in boxes.iterrows() if len(row) > 1
-            ]
-            all_rects.extend(rects)
-
-    updated_layout = figure['layout']
-    updated_layout['shapes'] = all_rects if len(all_rects) > 0 else [util.make_rect(0, 0, 1, 1, 'orange', vis=True)]
-    fig.update_layout(updated_layout)
-
-    print("INFO: graph reloaded")
-    return fig
+# @app.callback(
+#     Output('micrograph', 'figure'),
+#     [Input('boxfile-memory', 'data')],
+#     [Input('apply-btn', 'n_clicks')],
+#     # [Input('boxfile-checklist', 'value')],
+#     [State('micrograph', 'figure')],
+#     [State('box-percent-slider', 'value')],
+#     [State('conf-range-slider', 'value')])
+# def update_graph(data, n_clicks, figure, box_percent, conf_range):
+#     fig = go.Figure(data=figure['data'], layout=figure['layout'])
+#     traces = []
+#     if data is not None and data['boxfile-counter'] > 0:
+#         print("INFO: updating graph overlay (counter = %s)" % data['boxfile-counter'])
+#         for i in range(1, data['boxfile-counter'] + 1):
+#             # visible = str(i) in checklist_vals
+#             boxes = pd.DataFrame(data['boxfile_%s' % i])
+#             boxes = boxes.loc[(boxes['conf'] >= conf_range[0] / 100) & (boxes['conf'] <= conf_range[1] / 100)]
+#             boxes = boxes.sample(frac=box_percent / 100)
+#             # rects = [
+#             #     util.make_rect(row['x'], row['y'], row['w'], row['h'], util.get_color(data['boxfile-counter'])[0],
+#             #                    vis=visible) for i, row in boxes.iterrows() if len(row) > 1
+#             # ]
+#             traces.append(util.make_trace(boxes, util.get_color(data['boxfile-counter'])[0], data['filenames'][str(i)]))
+#             # all_rects.extend(rects)
+#
+#     # updated_layout = figure['layout']
+#     # updated_layout['shapes'] = all_rects if len(all_rects) > 0 else [util.make_rect(0, 0, 1, 1, 'orange', vis=True)]
+#     fig.add_traces(traces)
+#     fig.update_layout({
+#         'legend': {
+#             'orientation': 'h',
+#             'yanchor': 'top',
+#             'y': -0.05,
+#             'xanchor': 'right',
+#             'x': 1
+#         }
+#     })
+#
+#     print("INFO: graph reloaded")
+#     return fig
 
 
 try:

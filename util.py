@@ -2,9 +2,11 @@ from matplotlib import pyplot as plt
 import numpy as np
 import os
 import pandas as pd
+import plotly.graph_objects as go
 
-BOX_COLORS = ['#ff7f00', '#4daf4a', '#f781bf', '#a65628', '#984ea3', '#e41a1c', '#dede00', '#377eb8', '#999999']
-BOX_COLOR_NAMES = ['orange', 'green', 'pink', 'brown', 'violet', 'crimson', 'lime', 'steel blue', 'light gray']
+BOX_COLORS = ['#ff7f00', '#4daf4a', '#f781bf', '#a65628', '#984ea3', '#e41a1c', '#dede00', '#377eb8']
+BOX_COLOR_NAMES = ['orange', 'green', 'pink', 'brown', 'violet', 'crimson', 'lime', 'steel blue']
+NO_CONF_VAL = -1.0
 
 
 def get_color(i):
@@ -23,27 +25,75 @@ def hist_equalize(img_arr):
     return np.array(img_equalized.reshape(img_arr.shape))
 
 
-# make rect and scatter trace for dcc.Graph figure given box data (assume x, y are at center of box)
+# make rect for dcc.Graph figure given box data (assume x, y are at center of box)
 def make_rect(x, y, w, h, c, vis=True):
     return dict(type='rect', line=dict(color=c, width=1.5), xsizemode='scaled', ysizemode='scaled',
                 xref='x', yref='y', x0=x-w/2, y0=y-h/2, x1=x+w/2, y1=y+h/2, visible=vis)
 
-def make_trace(df):
-    return dict(type='rect', line=dict(color=c, width=1.5), xsizemode='scaled', ysizemode='scaled',
-                xref='x', yref='y', x0=x - w / 2, y0=y - h / 2, x1=x + w / 2, y1=y + h / 2, visible=vis)
+
+# make scatter trace for given df (boxfile)
+def make_trace(df, color, filename, filehash):
+    x = []
+    y = []
+    data = []
+    for i, row in df.iterrows():
+        x0 = row['x'] - row['w'] / 2
+        x1 = row['x'] + row['w'] / 2
+        y0 = row['y'] - row['h'] / 2
+        y1 = row['y'] + row['h'] / 2
+        x.extend([x0, x1, x1, x0, x0, None])  # have to bring the trace around to original point
+        y.extend([y0, y0, y1, y1, y0, None])  # None terminates each box
+        data.append((row['x'], row['y'], row['conf']))
+
+    if len(x) == 0 or len(y) == 0:
+        return []
+
+    if x[-1] is None:
+        del x[-1]
+    if y[-1] is None:
+        del y[-1]
+
+    return [go.Scattergl(x=x, y=y, mode='lines', line={'color': color}, name=filename, legendgroup=filehash,
+                         showlegend=True, hoverinfo='none'),
+            go.Scattergl(x=list(zip(*data))[0], y=list(zip(*data))[1], mode='markers', marker={'color': color},
+                         opacity=0, name=filename, legendgroup=filehash, showlegend=False, customdata=data,
+                         hovertemplate='<b>confidence</b>: %{customdata[2]:.2f}' +
+                                       '<br>center-x: %{customdata[0]:.2f}' +
+                                       '<br>center-y: %{customdata[1]:.2f}')]
+
+
+def filter_df(df, box_percent, conf_range, keep_no_conf=True):
+    conf_low = conf_range[0] / 100
+    conf_high = conf_range[1] / 100
+    if keep_no_conf:
+        boxes = df.loc[((df['conf'] >= conf_low) & (df['conf'] <= conf_high)) | (df['conf'] == -1)]
+    else:
+        boxes = df.loc[(df['conf'] >= conf_low) & (df['conf'] <= conf_high)]
+    boxes = boxes.sample(frac=box_percent / 100)
+    print("BOXES")
+    print(boxes)
+    return boxes
+
+
+# wrapper for above, incorporating confidence and box percent
+# def add_trace(fig, df, box_percent, conf_range, color, filename):
+#     boxes = df.loc[(df['conf'] >= conf_range[0] / 100) & (df['conf'] <= conf_range[1] / 100)]
+#     boxes = boxes.sample(frac=box_percent / 100)
+#     fig.add_trace(make_trace(boxes, color, filename))
+#
+#     return fig
 
 
 # read boxfile given filename, adjusting x, y to center of box if needed
 def parse_boxfile(decoded_contents, filename, manual_boxsize):
     ext = os.path.splitext(filename)[-1].lower()
     df = pd.read_csv(decoded_contents, delim_whitespace=True, skipinitialspace=True, skip_blank_lines=True, header=None)
-    print("MANUAL BOXSIZE")
-    print(manual_boxsize)
+    print("INFO: using manual boxsize %s for file %s" % (manual_boxsize, filename))
     if ext in ['.box']:
         df = df.rename(columns={0: 'x', 1: 'y', 2: 'w', 3: 'h'})
         df['x'] = df['x'] + (df['w'] / 2)
-        df['y'] = df['y'] + (df['y'] / 2)
-        df['conf'] = [1.0] * len(df.index)
+        df['y'] = df['y'] + (df['h'] / 2)
+        df['conf'] = [NO_CONF_VAL] * len(df.index)
     elif ext in ['.cbox']:
         df = df.rename(columns={0: 'x', 1: 'y', 2: 'w', 3: 'h', 4: 'conf'})
         df['x'] = df['x'] + (df['w'] / 2)
@@ -57,7 +107,7 @@ def parse_boxfile(decoded_contents, filename, manual_boxsize):
             return None
         df = df.rename(columns={0: 'x', 1: 'y'})
         df['w'] = df['h'] = [manual_boxsize] * len(df.index)
-        df['conf'] = [1.0] * len(df.index)
+        df['conf'] = [NO_CONF_VAL] * len(df.index)
 
     return df
 
