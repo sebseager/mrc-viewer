@@ -75,15 +75,6 @@ def filter_df(df, box_percent, conf_range, keep_no_conf=True):
     return boxes
 
 
-# wrapper for above, incorporating confidence and box percent
-# def add_trace(fig, df, box_percent, conf_range, color, filename):
-#     boxes = df.loc[(df['conf'] >= conf_range[0] / 100) & (df['conf'] <= conf_range[1] / 100)]
-#     boxes = boxes.sample(frac=box_percent / 100)
-#     fig.add_trace(make_trace(boxes, color, filename))
-#
-#     return fig
-
-
 # read boxfile given filename, adjusting x, y to center of box if needed
 def parse_boxfile(decoded_contents, filename, manual_boxsize):
     ext = os.path.splitext(filename)[-1].lower()

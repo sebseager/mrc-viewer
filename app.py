@@ -52,7 +52,6 @@ manual_boxsize_warning = html.H6(
 
 # main layout
 app.layout = html.Div([
-    # dcc.Store(id='mrc-memory', data={'mrc': []}),
     dcc.Store(id='boxfile-memory', data={'boxfile-counter': 0, 'boxfiles': {}, 'filenames': {}, 'filehashes': {}}),
     html.Div([
         html.Div([
@@ -371,7 +370,6 @@ def update_boxfile_checklist(data, checklist_opts, checklist_vals):
     [State('conf-range-slider', 'value')],
     [State('no-conf-boxes-switch', 'on')])
 def store_box(contents, n_clicks, manual_boxsize, filename, data, figure, box_percent, conf_range, show_no_conf_boxes):
-    # data = data or {'boxfile-counter': 0, 'filenames': {}, 'hashes': {}}
     fig = go.Figure(data=figure['data'], layout=figure['layout'])
 
     if contents is not None:  # and filename not in data['filenames'].values():
@@ -394,36 +392,14 @@ def store_box(contents, n_clicks, manual_boxsize, filename, data, figure, box_pe
         if last_uploaded_df is None:
             return data, manual_boxsize_warning, fig
 
-        # rects = [
-        #     util.make_rect(row['x'], row['y'], row['w'], row['h'], util.get_color(data['boxfile-counter'])[0] + 1)
-        #     for i, row in df.iterrows() if len(row) > 1
-        # ]
-
         data['boxfile-counter'] = data['boxfile-counter'] + 1
         data['filenames'][data['boxfile-counter']] = filename
         data['filehashes'][data['boxfile-counter']] = hashed
-        # data['has-conf'][data['boxfile-counter']] = has_conf
         data['boxfiles'][data['boxfile-counter']] = last_uploaded_df.to_dict()
-        # data['rects_%s' % data['boxfile-counter']] = rects
-
-        # fig = util.add_trace(fig, df, box_percent, conf_range, util.get_color(data['boxfile-counter'])[0], filename)
-
-        # boxes = df.loc[(df['conf'] >= conf_range[0] / 100) & (df['conf'] <= conf_range[1] / 100)]
-        # boxes = boxes.sample(frac=box_percent / 100)
-        # print(fig['data'])
-
-        # fig['data'] = [x for x in fig['data'] if x['legendgroup'] != hashed]
 
         boxes = util.filter_df(last_uploaded_df, box_percent, conf_range, keep_no_conf=show_no_conf_boxes)
 
         fig.add_traces(util.make_trace(boxes, util.get_color(data['boxfile-counter'])[0], filename, hashed))
-
-    # no_conf_hashes = [data['hashes'][k2] for k2 in [k for k, v in data['has-conf'].items() if v is True]]
-    # for h in no_conf_hashes:
-    #     if show_no_conf_boxes:
-    #         pass
-    #     else:
-    #         pass
 
     fig.update_layout({
         'legend': {
@@ -438,48 +414,6 @@ def store_box(contents, n_clicks, manual_boxsize, filename, data, figure, box_pe
     print("INFO: boxfile storage reloaded")
     # print(fig)
     return data, manual_boxsize_title, fig
-
-
-# @app.callback(
-#     Output('micrograph', 'figure'),
-#     [Input('boxfile-memory', 'data')],
-#     [Input('apply-btn', 'n_clicks')],
-#     # [Input('boxfile-checklist', 'value')],
-#     [State('micrograph', 'figure')],
-#     [State('box-percent-slider', 'value')],
-#     [State('conf-range-slider', 'value')])
-# def update_graph(data, n_clicks, figure, box_percent, conf_range):
-#     fig = go.Figure(data=figure['data'], layout=figure['layout'])
-#     traces = []
-#     if data is not None and data['boxfile-counter'] > 0:
-#         print("INFO: updating graph overlay (counter = %s)" % data['boxfile-counter'])
-#         for i in range(1, data['boxfile-counter'] + 1):
-#             # visible = str(i) in checklist_vals
-#             boxes = pd.DataFrame(data['boxfile_%s' % i])
-#             boxes = boxes.loc[(boxes['conf'] >= conf_range[0] / 100) & (boxes['conf'] <= conf_range[1] / 100)]
-#             boxes = boxes.sample(frac=box_percent / 100)
-#             # rects = [
-#             #     util.make_rect(row['x'], row['y'], row['w'], row['h'], util.get_color(data['boxfile-counter'])[0],
-#             #                    vis=visible) for i, row in boxes.iterrows() if len(row) > 1
-#             # ]
-#             traces.append(util.make_trace(boxes, util.get_color(data['boxfile-counter'])[0], data['filenames'][str(i)]))
-#             # all_rects.extend(rects)
-#
-#     # updated_layout = figure['layout']
-#     # updated_layout['shapes'] = all_rects if len(all_rects) > 0 else [util.make_rect(0, 0, 1, 1, 'orange', vis=True)]
-#     fig.add_traces(traces)
-#     fig.update_layout({
-#         'legend': {
-#             'orientation': 'h',
-#             'yanchor': 'top',
-#             'y': -0.05,
-#             'xanchor': 'right',
-#             'x': 1
-#         }
-#     })
-#
-#     print("INFO: graph reloaded")
-#     return fig
 
 
 try:
