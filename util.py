@@ -78,6 +78,7 @@ def filter_df(df, box_percent, conf_range, keep_no_conf=True):
 # read boxfile given filename, adjusting x, y to center of box if needed
 def parse_boxfile(decoded_contents, filename, manual_boxsize):
     ext = os.path.splitext(filename)[-1].lower()
+    print(decoded_contents)
     df = pd.read_csv(decoded_contents, delim_whitespace=True, skipinitialspace=True, skip_blank_lines=True, header=None)
     print("INFO: using manual boxsize %s for file %s" % (manual_boxsize, filename))
     if ext in ['.box']:
