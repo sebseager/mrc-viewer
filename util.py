@@ -1,8 +1,10 @@
 from matplotlib import pyplot as plt
 import numpy as np
 import os
+import re
 import pandas as pd
 import plotly.graph_objects as go
+from io import StringIO
 
 BOX_COLORS = ['#ff7f00', '#4daf4a', '#f781bf', '#a65628', '#984ea3', '#e41a1c', '#dede00', '#377eb8']
 BOX_COLOR_NAMES = ['orange', 'green', 'pink', 'brown', 'violet', 'crimson', 'lime', 'steel blue']
@@ -76,24 +78,52 @@ def filter_df(df, box_percent, conf_range, keep_no_conf=True):
 
 
 # read boxfile given filename, adjusting x, y to center of box if needed
-def parse_boxfile(decoded_contents, filename, manual_boxsize):
+def parse_boxfile(file_str, filename, manual_boxsize):
     ext = os.path.splitext(filename)[-1].lower()
-    print(decoded_contents)
-    df = pd.read_csv(decoded_contents, delim_whitespace=True, skipinitialspace=True, skip_blank_lines=True, header=None)
+
+    # remove non-numeric lines
+    no_header_file = ""
+    star_header = {}
+    for line in file_str.splitlines():
+        if ext in ['.star'] and line.startswith('_') and '#' in line:
+            split_line = ''.join(line.split()).split('#')
+            star_header[split_line[0]] = split_line[1]
+            continue
+        elif re.search('[0-9]', line) is None:
+            continue
+        no_header_file = no_header_file + line + os.linesep
+
+    str_buffer = StringIO(no_header_file)
+    df = pd.read_csv(str_buffer, delim_whitespace=True, skipinitialspace=True, skip_blank_lines=True, header=None)
     print("INFO: using manual boxsize %s for file %s" % (manual_boxsize, filename))
+
     if ext in ['.box']:
         df = df.rename(columns={0: 'x', 1: 'y', 2: 'w', 3: 'h'})
         df['x'] = df['x'] + (df['w'] / 2)
         df['y'] = df['y'] + (df['h'] / 2)
         df['conf'] = [NO_CONF_VAL] * len(df.index)
+
     elif ext in ['.cbox']:
         df = df.rename(columns={0: 'x', 1: 'y', 2: 'w', 3: 'h', 4: 'conf'})
         df['x'] = df['x'] + (df['w'] / 2)
         df['y'] = df['y'] + (df['h'] / 2)
+
     elif ext in ['.star']:
         if manual_boxsize is None or manual_boxsize == "":
             return None
-        pass
+        supported_cols = ['_rlnCoordinateX', '_rlnCoordinateY', '_rlnFigureOfMerit']  # [:2] required, [2] is optional
+        if not all(k in star_header for k in supported_cols[:2]):
+            print("ERROR: Could not find x/y STAR header columns.")
+        filtered_star_header = {k: v for k, v in star_header.items() if k in supported_cols}
+        filtered_star_header['x'] = filtered_star_header.pop(supported_cols[0])
+        filtered_star_header['y'] = filtered_star_header.pop(supported_cols[1])
+        if supported_cols[2] in filtered_star_header:
+            filtered_star_header['conf'] = filtered_star_header.pop(supported_cols[2])
+        df = df.rename(columns={int(v) - 1: k for k, v in filtered_star_header.items()})
+        df['w'] = df['h'] = [manual_boxsize] * len(df.index)
+        if supported_cols[2] not in filtered_star_header:
+            df['conf'] = [NO_CONF_VAL] * len(df.index)  # do this after required columns are assigned
+
     elif ext in ['.coord']:
         if manual_boxsize is None or manual_boxsize == "":
             return None

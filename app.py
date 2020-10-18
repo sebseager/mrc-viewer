@@ -62,7 +62,7 @@ def get_app_layout():
         dcc.Store(id='boxfile-memory', data={'boxfile-counter': 0, 'boxfiles': {}, 'filenames': {}, 'filehashes': {}}),
         html.Div([
             html.Div([
-                html.H3('Coordinates'),
+                html.H3('Particle Coordinates'),
                 du.Upload(
                     id='upload-box',
                     max_file_size=100,  # in MB
@@ -224,7 +224,7 @@ def get_app_layout():
             ], className="five columns"),
 
             html.Div([
-                html.H3('Micrograph', id='mrc-name'),
+                html.H3('Electron Micrograph', id='mrc-name'),
                 du.Upload(
                     id='upload-image',
                     max_file_size=1800,  # in MB
@@ -341,7 +341,7 @@ def display_boxfile_table(dropdown_value, data):
     [State('micrograph', 'config')])
 def load_micrograph(upload_done, filenames, upload_id, graph_figure, graph_style, graph_config):
     fig = go.Figure()
-    filename = 'Micrograph'
+    filename = 'Electron Micrograph'
     if upload_done and filenames:
         filename = filenames[0]
         print("INFO: loading mrc")
@@ -418,22 +418,22 @@ def store_box(upload_done, n_clicks, filenames, upload_id, manual_boxsize, data,
               show_no_conf_boxes):
     fig = go.Figure(data=figure['data'], layout=figure['layout'])
 
-    if upload_done and filenames:  # and filename not in data['filenames'].values():
+    if upload_done and filenames:
         for filename in filenames:
             print("INFO: storing boxfile (filename = %s)" % filename)
             with open(Path(UPLOAD_ROOT) / upload_id / filename, mode='r') as file:
-                boxfile = file.read()
+                file_str = file.read()
                 # content_type, content_string = contents.split(',')
                 # decoded = base64.b64decode(content_string)
                 # last_uploaded_df = util.parse_boxfile(StringIO(boxfile.decode('utf-8')), filename, manual_boxsize)
-                hashed = hashlib.md5(boxfile.encode('utf-8')).hexdigest()
-                last_uploaded_df = util.parse_boxfile(StringIO(boxfile), filename, manual_boxsize)
+                hashed = hashlib.md5(file_str.encode('utf-8')).hexdigest()
+                last_uploaded_df = util.parse_boxfile(file_str, filename, manual_boxsize)
 
             fig['data'] = [trace for trace in fig['data'] if trace['type'] != 'scatter' and trace['type'] != 'scattergl']
             for i in range(1, data['boxfile-counter'] + 1):
                 df = pd.DataFrame(data['boxfiles'][str(i)])
-                filtered_df = util.filter_df(df, box_percent, conf_range, keep_no_conf=show_no_conf_boxes)
-                fig.add_traces(util.make_trace(filtered_df, util.get_color(i)[0], data['filenames'][str(i)],
+                boxes = util.filter_df(df, box_percent, conf_range, keep_no_conf=show_no_conf_boxes)
+                fig.add_traces(util.make_trace(boxes, util.get_color(i)[0], data['filenames'][str(i)],
                                                data['filehashes'][str(i)]))
 
             if hashed in data['filehashes'].values():
@@ -455,7 +455,7 @@ def store_box(upload_done, n_clicks, filenames, upload_id, manual_boxsize, data,
         'legend': {
             'orientation': 'h',
             'yanchor': 'top',
-            'y': -0.05,
+            'y': -0.07,
             'xanchor': 'center',
             'x': 0.5
         }
