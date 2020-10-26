@@ -91,7 +91,8 @@ def parse_boxfile(file_str, filename, manual_boxsize):
             continue
         elif re.search('[0-9]', line) is None:
             continue
-        no_header_file = no_header_file + line + os.linesep
+        elif star_header:  # if we're past the header
+            no_header_file = no_header_file + line + os.linesep
 
     str_buffer = StringIO(no_header_file)
     df = pd.read_csv(str_buffer, delim_whitespace=True, skipinitialspace=True, skip_blank_lines=True, header=None)
